@@ -1,1 +1,72 @@
+# Interactive Script to Backup Azure SQL Database to a Storage Account
+
+# Import the Az module
+Import-Module Az
+
+# Prompt user for subscription
+$subscriptionId = Read-Host "Enter the Subscription ID to use"
+Set-AzContext -SubscriptionId $subscriptionId
+
+# Prompt user for resource group
+$resourceGroupName = Read-Host "Enter the name of the Resource Group"
+if (-not (Get-AzResourceGroup -Name $resourceGroupName -ErrorAction SilentlyContinue)) {
+    Write-Output "Resource group '$resourceGroupName' does not exist. Exiting."
+    return
+}
+
+# Prompt user for Azure SQL Server
+$sqlServerName = Read-Host "Enter the name of the Azure SQL Server"
+if (-not (Get-AzSqlServer -ResourceGroupName $resourceGroupName -ServerName $sqlServerName -ErrorAction SilentlyContinue)) {
+    Write-Output "SQL Server '$sqlServerName' does not exist in resource group '$resourceGroupName'. Exiting."
+    return
+}
+
+# Prompt user for Azure SQL Database
+$sqlDatabaseName = Read-Host "Enter the name of the Azure SQL Database"
+if (-not (Get-AzSqlDatabase -ResourceGroupName $resourceGroupName -ServerName $sqlServerName -DatabaseName $sqlDatabaseName -ErrorAction SilentlyContinue)) {
+    Write-Output "SQL Database '$sqlDatabaseName' does not exist on server '$sqlServerName'. Exiting."
+    return
+}
+
+# Prompt user for Storage Account
+$storageAccountName = Read-Host "Enter the name of the Storage Account"
+if (-not (Get-AzStorageAccount -ResourceGroupName $resourceGroupName -Name $storageAccountName -ErrorAction SilentlyContinue)) {
+    Write-Output "Storage account '$storageAccountName' does not exist in resource group '$resourceGroupName'. Exiting."
+    return
+}
+
+# Get Storage Account Key
+$storageAccountKey = (Get-AzStorageAccountKey -ResourceGroupName $resourceGroupName -Name $storageAccountName).Value[0]
+
+# Prompt user for Storage Container
+$containerName = Read-Host "Enter the name of the Storage Container"
+$storageContext = New-AzStorageContext -StorageAccountName $storageAccountName -StorageAccountKey $storageAccountKey
+if (-not (Get-AzStorageContainer -Context $storageContext -Name $containerName -ErrorAction SilentlyContinue)) {
+    Write-Output "Storage container '$containerName' does not exist. Creating it now..."
+    New-AzStorageContainer -Name $containerName -Context $storageContext
+}
+
+# Generate a SAS token for the Storage Account
+$sasToken = New-AzStorageAccountSASToken -ResourceGroupName $resourceGroupName -AccountName $storageAccountName -Service Blob -Permission rw -ExpiryTime (Get-Date).AddHours(2)
+
+# Construct the Storage URL
+$storageUri = "https://$storageAccountName.blob.core.windows.net/$containerName/$sqlDatabaseName.bacpac"
+
+# Start the Export Operation
+Write-Output "Starting export of database '$sqlDatabaseName' to '$storageUri'..."
+$exportResult = New-AzSqlDatabaseExport -ResourceGroupName $resourceGroupName `
+    -ServerName $sqlServerName `
+    -DatabaseName $sqlDatabaseName `
+    -StorageKeyType StorageAccessKey `
+    -StorageKey $storageAccountKey `
+    -StorageUri $storageUri `
+    -AdministratorLogin (Read-Host "Enter the SQL Server Admin Username") `
+    -AdministratorLoginPassword (Read-Host "Enter the SQL Server Admin Password" -AsSecureString)
+
+# Output Result
+if ($exportResult.Status -eq "InProgress" -or $exportResult.Status -eq "Succeeded") {
+    Write-Output "Export operation started successfully. Monitor the status in the Azure portal."
+} else {
+    Write-Output "Export operation failed. Check the details and try again."
+}
 
