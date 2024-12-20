@@ -1,6 +1,7 @@
 # Interactive Script to Backup Azure SQL Database to a Storage Account
 
 # Prompt user for resource group
+
 Write-Host "Enter the name of the Resource Group:" -ForegroundColor Cyan
 $resourceGroupName = Read-Host
 if (-not (Get-AzResourceGroup -Name $resourceGroupName -ErrorAction SilentlyContinue)) {
@@ -9,6 +10,7 @@ if (-not (Get-AzResourceGroup -Name $resourceGroupName -ErrorAction SilentlyCont
 }
 
 # Prompt user for Azure SQL Server
+
 Write-Host "Enter the name of the Azure SQL Server:" -ForegroundColor Cyan
 $sqlServerName = Read-Host
 if (-not (Get-AzSqlServer -ResourceGroupName $resourceGroupName -ServerName $sqlServerName -ErrorAction SilentlyContinue)) {
@@ -17,6 +19,7 @@ if (-not (Get-AzSqlServer -ResourceGroupName $resourceGroupName -ServerName $sql
 }
 
 # Prompt user for Azure SQL Database
+
 Write-Host "Enter the name of the Azure SQL Database:" -ForegroundColor Cyan
 $sqlDatabaseName = Read-Host
 if (-not (Get-AzSqlDatabase -ResourceGroupName $resourceGroupName -ServerName $sqlServerName -DatabaseName $sqlDatabaseName -ErrorAction SilentlyContinue)) {
@@ -25,6 +28,7 @@ if (-not (Get-AzSqlDatabase -ResourceGroupName $resourceGroupName -ServerName $s
 }
 
 # Prompt user for Storage Account
+
 Write-Host "Enter the name of the Storage Account:" -ForegroundColor Cyan
 $storageAccountName = Read-Host
 if (-not (Get-AzStorageAccount -ResourceGroupName $resourceGroupName -Name $storageAccountName -ErrorAction SilentlyContinue)) {
@@ -36,6 +40,7 @@ if (-not (Get-AzStorageAccount -ResourceGroupName $resourceGroupName -Name $stor
 $storageAccountKey = (Get-AzStorageAccountKey -ResourceGroupName $resourceGroupName -Name $storageAccountName).Value[0]
 
 # Prompt user for Storage Container
+
 Write-Host "Enter the name of the Storage Container:" -ForegroundColor Cyan
 $containerName = Read-Host
 $storageContext = New-AzStorageContext -StorageAccountName $storageAccountName -StorageAccountKey $storageAccountKey
