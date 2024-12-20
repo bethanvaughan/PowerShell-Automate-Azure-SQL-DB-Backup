@@ -1,37 +1,34 @@
-# Interactive Script to Backup Azure SQL Database to a Storage Account
-
-# Import the Az module
-Import-Module Az
-
-# Prompt user for subscription
-$subscriptionId = Read-Host "Enter the Subscription ID to use"
-Set-AzContext -SubscriptionId $subscriptionId
+# Interactive Script to Backup Azure SQL Database to a Storage Account with Colors
 
 # Prompt user for resource group
-$resourceGroupName = Read-Host "Enter the name of the Resource Group"
+Write-Host "Enter the name of the Resource Group:" -ForegroundColor Cyan
+$resourceGroupName = Read-Host
 if (-not (Get-AzResourceGroup -Name $resourceGroupName -ErrorAction SilentlyContinue)) {
-    Write-Output "Resource group '$resourceGroupName' does not exist. Exiting."
+    Write-Host "Resource group '$resourceGroupName' does not exist. Exiting." -ForegroundColor Red
     return
 }
 
 # Prompt user for Azure SQL Server
-$sqlServerName = Read-Host "Enter the name of the Azure SQL Server"
+Write-Host "Enter the name of the Azure SQL Server:" -ForegroundColor Cyan
+$sqlServerName = Read-Host
 if (-not (Get-AzSqlServer -ResourceGroupName $resourceGroupName -ServerName $sqlServerName -ErrorAction SilentlyContinue)) {
-    Write-Output "SQL Server '$sqlServerName' does not exist in resource group '$resourceGroupName'. Exiting."
+    Write-Host "SQL Server '$sqlServerName' does not exist in resource group '$resourceGroupName'. Exiting." -ForegroundColor Red
     return
 }
 
 # Prompt user for Azure SQL Database
-$sqlDatabaseName = Read-Host "Enter the name of the Azure SQL Database"
+Write-Host "Enter the name of the Azure SQL Database:" -ForegroundColor Cyan
+$sqlDatabaseName = Read-Host
 if (-not (Get-AzSqlDatabase -ResourceGroupName $resourceGroupName -ServerName $sqlServerName -DatabaseName $sqlDatabaseName -ErrorAction SilentlyContinue)) {
-    Write-Output "SQL Database '$sqlDatabaseName' does not exist on server '$sqlServerName'. Exiting."
+    Write-Host "SQL Database '$sqlDatabaseName' does not exist on server '$sqlServerName'. Exiting." -ForegroundColor Red
     return
 }
 
 # Prompt user for Storage Account
-$storageAccountName = Read-Host "Enter the name of the Storage Account"
+Write-Host "Enter the name of the Storage Account:" -ForegroundColor Cyan
+$storageAccountName = Read-Host
 if (-not (Get-AzStorageAccount -ResourceGroupName $resourceGroupName -Name $storageAccountName -ErrorAction SilentlyContinue)) {
-    Write-Output "Storage account '$storageAccountName' does not exist in resource group '$resourceGroupName'. Exiting."
+    Write-Host "Storage account '$storageAccountName' does not exist in resource group '$resourceGroupName'. Exiting." -ForegroundColor Red
     return
 }
 
@@ -39,11 +36,13 @@ if (-not (Get-AzStorageAccount -ResourceGroupName $resourceGroupName -Name $stor
 $storageAccountKey = (Get-AzStorageAccountKey -ResourceGroupName $resourceGroupName -Name $storageAccountName).Value[0]
 
 # Prompt user for Storage Container
-$containerName = Read-Host "Enter the name of the Storage Container"
+Write-Host "Enter the name of the Storage Container:" -ForegroundColor Cyan
+$containerName = Read-Host
 $storageContext = New-AzStorageContext -StorageAccountName $storageAccountName -StorageAccountKey $storageAccountKey
 if (-not (Get-AzStorageContainer -Context $storageContext -Name $containerName -ErrorAction SilentlyContinue)) {
-    Write-Output "Storage container '$containerName' does not exist. Creating it now..."
+    Write-Host "Storage container '$containerName' does not exist. Creating it now..." -ForegroundColor Yellow
     New-AzStorageContainer -Name $containerName -Context $storageContext
+    Write-Host "Storage container '$containerName' created successfully." -ForegroundColor Green
 }
 
 # Generate a SAS token for the Storage Account
@@ -53,7 +52,7 @@ $sasToken = New-AzStorageAccountSASToken -ResourceGroupName $resourceGroupName -
 $storageUri = "https://$storageAccountName.blob.core.windows.net/$containerName/$sqlDatabaseName.bacpac"
 
 # Start the Export Operation
-Write-Output "Starting export of database '$sqlDatabaseName' to '$storageUri'..."
+Write-Host "Starting export of database '$sqlDatabaseName' to '$storageUri'..." -ForegroundColor Yellow
 $exportResult = New-AzSqlDatabaseExport -ResourceGroupName $resourceGroupName `
     -ServerName $sqlServerName `
     -DatabaseName $sqlDatabaseName `
@@ -65,8 +64,7 @@ $exportResult = New-AzSqlDatabaseExport -ResourceGroupName $resourceGroupName `
 
 # Output Result
 if ($exportResult.Status -eq "InProgress" -or $exportResult.Status -eq "Succeeded") {
-    Write-Output "Export operation started successfully. Monitor the status in the Azure portal."
+    Write-Host "Export operation started successfully. Monitor the status in the Azure portal." -ForegroundColor Green
 } else {
-    Write-Output "Export operation failed. Check the details and try again."
+    Write-Host "Export operation failed. Check the details and try again." -ForegroundColor Red
 }
-
