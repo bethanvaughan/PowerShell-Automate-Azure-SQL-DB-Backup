@@ -1,75 +1,64 @@
-# Interactive Script to Backup Azure SQL Database to a Storage Account
+Write-Host "\nStarting Azure SQL Database Backup Script...\n" -ForegroundColor Cyan
 
-# Prompt user for resource group
+# Login to Azure (if not already logged in)
+Write-Host "Checking Azure authentication..." -ForegroundColor Yellow
+if (-not (Get-AzContext)) {
+    Connect-AzAccount
+}
 
-Write-Host "Enter the name of the Resource Group:" -ForegroundColor Cyan
-$resourceGroupName = Read-Host
+# Prompt for user inputs
+$resourceGroupName = Read-Host "Enter the resource group name"
+$sqlServerName = Read-Host "Enter the SQL Server name"
+$sqlDatabaseName = Read-Host "Enter the SQL Database name"
+$storageAccountName = Read-Host "Enter the Storage Account name"
+$containerName = Read-Host "Enter the Blob Container name"
+$exportAdminLogin = Read-Host "Enter the SQL Server admin username"
+$exportAdminPassword = Read-Host -AsSecureString "Enter the SQL Server admin password"
+
+Write-Host "\nValidating resources..." -ForegroundColor Yellow
+
+# Check and create resource group
 if (-not (Get-AzResourceGroup -Name $resourceGroupName -ErrorAction SilentlyContinue)) {
-    Write-Host "Resource group '$resourceGroupName' does not exist. Exiting." -ForegroundColor Red
-    return
-}
-
-# Prompt user for Azure SQL Server
-
-Write-Host "Enter the name of the Azure SQL Server:" -ForegroundColor Cyan
-$sqlServerName = Read-Host
-if (-not (Get-AzSqlServer -ResourceGroupName $resourceGroupName -ServerName $sqlServerName -ErrorAction SilentlyContinue)) {
-    Write-Host "SQL Server '$sqlServerName' does not exist in resource group '$resourceGroupName'. Exiting." -ForegroundColor Red
-    return
-}
-
-# Prompt user for Azure SQL Database
-
-Write-Host "Enter the name of the Azure SQL Database:" -ForegroundColor Cyan
-$sqlDatabaseName = Read-Host
-if (-not (Get-AzSqlDatabase -ResourceGroupName $resourceGroupName -ServerName $sqlServerName -DatabaseName $sqlDatabaseName -ErrorAction SilentlyContinue)) {
-    Write-Host "SQL Database '$sqlDatabaseName' does not exist on server '$sqlServerName'. Exiting." -ForegroundColor Red
-    return
-}
-
-# Prompt user for Storage Account
-
-Write-Host "Enter the name of the Storage Account:" -ForegroundColor Cyan
-$storageAccountName = Read-Host
-if (-not (Get-AzStorageAccount -ResourceGroupName $resourceGroupName -Name $storageAccountName -ErrorAction SilentlyContinue)) {
-    Write-Host "Storage account '$storageAccountName' does not exist in resource group '$resourceGroupName'. Exiting." -ForegroundColor Red
-    return
-}
-
-# Get Storage Account Key
-$storageAccountKey = (Get-AzStorageAccountKey -ResourceGroupName $resourceGroupName -Name $storageAccountName).Value[0]
-
-# Prompt user for Storage Container
-
-Write-Host "Enter the name of the Storage Container:" -ForegroundColor Cyan
-$containerName = Read-Host
-$storageContext = New-AzStorageContext -StorageAccountName $storageAccountName -StorageAccountKey $storageAccountKey
-if (-not (Get-AzStorageContainer -Context $storageContext -Name $containerName -ErrorAction SilentlyContinue)) {
-    Write-Host "Storage container '$containerName' does not exist. Creating it now..." -ForegroundColor Yellow
-    New-AzStorageContainer -Name $containerName -Context $storageContext
-    Write-Host "Storage container '$containerName' created successfully." -ForegroundColor Green
-}
-
-# Generate a SAS token for the Storage Account
-$sasToken = New-AzStorageAccountSASToken -ResourceGroupName $resourceGroupName -AccountName $storageAccountName -Service Blob -Permission rw -ExpiryTime (Get-Date).AddHours(2)
-
-# Construct the Storage URL
-$storageUri = "https://$storageAccountName.blob.core.windows.net/$containerName/$sqlDatabaseName.bacpac"
-
-# Start the Export Operation
-Write-Host "Starting export of database '$sqlDatabaseName' to '$storageUri'..." -ForegroundColor Yellow
-$exportResult = New-AzSqlDatabaseExport -ResourceGroupName $resourceGroupName `
-    -ServerName $sqlServerName `
-    -DatabaseName $sqlDatabaseName `
-    -StorageKeyType StorageAccessKey `
-    -StorageKey $storageAccountKey `
-    -StorageUri $storageUri `
-    -AdministratorLogin (Read-Host "Enter the SQL Server Admin Username") `
-    -AdministratorLoginPassword (Read-Host "Enter the SQL Server Admin Password" -AsSecureString)
-
-# Output Result
-if ($exportResult.Status -eq "InProgress" -or $exportResult.Status -eq "Succeeded") {
-    Write-Host "Export operation started successfully. Monitor the status in the Azure portal." -ForegroundColor Green
+    Write-Host "Resource Group '$resourceGroupName' does not exist. Creating..." -ForegroundColor Green
+    New-AzResourceGroup -Name $resourceGroupName -Location (Get-AzLocation | Select-Object -First 1).Location
 } else {
-    Write-Host "Export operation failed. Check the details and try again." -ForegroundColor Red
+    Write-Host "Resource Group '$resourceGroupName' exists." -ForegroundColor Cyan
 }
+
+# Check and create storage account
+if (-not (Get-AzStorageAccount -ResourceGroupName $resourceGroupName -Name $storageAccountName -ErrorAction SilentlyContinue)) {
+    Write-Host "Storage Account '$storageAccountName' does not exist. Creating..." -ForegroundColor Green
+    $storageAccount = New-AzStorageAccount -ResourceGroupName $resourceGroupName -Name $storageAccountName -SkuName Standard_LRS -Location (Get-AzResourceGroup -Name $resourceGroupName).Location
+} else {
+    Write-Host "Storage Account '$storageAccountName' exists." -ForegroundColor Cyan
+    $storageAccount = Get-AzStorageAccount -ResourceGroupName $resourceGroupName -Name $storageAccountName
+}
+
+# Retrieve storage account context
+$storageAccountContext = $storageAccount.Context
+
+# Check and create blob container
+if (-not (Get-AzStorageContainer -Context $storageAccountContext -Name $containerName -ErrorAction SilentlyContinue)) {
+    Write-Host "Blob Container '$containerName' does not exist. Creating..." -ForegroundColor Green
+    New-AzStorageContainer -Context $storageAccountContext -Name $containerName
+} else {
+    Write-Host "Blob Container '$containerName' exists." -ForegroundColor Cyan
+}
+
+# Generate SAS token for storage account
+$sasToken = New-AzStorageAccountSASToken -Context $storageAccountContext -ExpiryTime (Get-Date).AddYears(1) -Permission rw -ResourceType Container -Service Blob
+
+# Export database
+Write-Host "\nStarting database export..." -ForegroundColor Yellow
+$exportOperation = New-AzSqlDatabaseExport -ResourceGroupName $resourceGroupName -ServerName $sqlServerName -DatabaseName $sqlDatabaseName `
+    -StorageKeyType StorageAccessKey -StorageKey (ConvertTo-SecureString $storageAccount.StorageAccountKey -AsPlainText -Force) `
+    -StorageUri "https://$($storageAccountName).blob.core.windows.net/$($containerName)/$($sqlDatabaseName)_$(Get-Date -Format yyyyMMddHHmmss).bacpac" `
+    -AdministratorLogin $exportAdminLogin -AdministratorLoginPassword $exportAdminPassword
+
+Write-Host "\nDatabase export operation initiated. Monitor the Azure portal for completion." -ForegroundColor Green
+
+# Add script to Azure Automation for scheduling
+Write-Host "\nTo schedule this script in an Automation Account:" -ForegroundColor Yellow
+Write-Host "1. Save this script as a PowerShell runbook in your Automation Account." -ForegroundColor Cyan
+Write-Host "2. Create a schedule (e.g., daily) and link it to the runbook." -ForegroundColor Cyan
+Write-Host "\nScript execution complete." -ForegroundColor Green
