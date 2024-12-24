@@ -1,1 +1,102 @@
+Write-Host "\nStarting Azure SQL Database Backup Script...\n" -ForegroundColor Cyan
 
+# Login to Azure (if not already logged in)
+Write-Host "Checking Azure authentication..." -ForegroundColor Yellow
+if (-not (Get-AzContext)) {
+    Connect-AzAccount
+}
+
+# Prompt for user inputs
+$resourceGroupName = Read-Host "Enter the resource group name"
+$sqlServerName = Read-Host "Enter the SQL Server name"
+$sqlDatabaseName = Read-Host "Enter the SQL Database name"
+$storageAccountName = Read-Host "Enter the Storage Account name"
+$containerName = Read-Host "Enter the Blob Container name"
+$exportAdminLogin = Read-Host "Enter the SQL Server admin username"
+$exportAdminPassword = Read-Host -AsSecureString "Enter the SQL Server admin password"
+
+Write-Host "\nValidating resources..." -ForegroundColor Yellow
+
+# Check and create resource group
+if (-not (Get-AzResourceGroup -Name $resourceGroupName -ErrorAction SilentlyContinue)) {
+    Write-Host "Resource Group '$resourceGroupName' does not exist. Creating..." -ForegroundColor Green
+    New-AzResourceGroup -Name $resourceGroupName -Location (Get-AzLocation | Select-Object -First 1).Location
+} else {
+    Write-Host "Resource Group '$resourceGroupName' exists." -ForegroundColor Cyan
+}
+
+# Check and create storage account
+if (-not (Get-AzStorageAccount -ResourceGroupName $resourceGroupName -Name $storageAccountName -ErrorAction SilentlyContinue)) {
+    Write-Host "Storage Account '$storageAccountName' does not exist. Creating..." -ForegroundColor Green
+    $storageAccount = New-AzStorageAccount -ResourceGroupName $resourceGroupName -Name $storageAccountName -SkuName Standard_LRS -Location (Get-AzResourceGroup -Name $resourceGroupName).Location
+} else {
+    Write-Host "Storage Account '$storageAccountName' exists." -ForegroundColor Cyan
+    $storageAccount = Get-AzStorageAccount -ResourceGroupName $resourceGroupName -Name $storageAccountName
+}
+
+# Retrieve storage account context
+$storageAccountContext = $storageAccount.Context
+
+# Check and create blob container
+if (-not (Get-AzStorageContainer -Context $storageAccountContext -Name $containerName -ErrorAction SilentlyContinue)) {
+    Write-Host "Blob Container '$containerName' does not exist. Creating..." -ForegroundColor Green
+    New-AzStorageContainer -Context $storageAccountContext -Name $containerName
+} else {
+    Write-Host "Blob Container '$containerName' exists." -ForegroundColor Cyan
+}
+
+# Generate SAS token for storage account
+$sasToken = New-AzStorageAccountSASToken -Context $storageAccountContext -ExpiryTime (Get-Date).AddYears(1) -Permission rw -ResourceType Container -Service Blob
+
+# Export database
+Write-Host "\nStarting database export..." -ForegroundColor Yellow
+$exportOperation = New-AzSqlDatabaseExport -ResourceGroupName $resourceGroupName -ServerName $sqlServerName -DatabaseName $sqlDatabaseName `
+    -StorageKeyType StorageAccessKey -StorageKey (ConvertTo-SecureString $storageAccount.StorageAccountKey -AsPlainText -Force) `
+    -StorageUri "https://$($storageAccountName).blob.core.windows.net/$($containerName)/$($sqlDatabaseName)_$(Get-Date -Format yyyyMMddHHmmss).bacpac" `
+    -AdministratorLogin $exportAdminLogin -AdministratorLoginPassword $exportAdminPassword
+
+Write-Host "\nDatabase export operation initiated. Monitor the Azure portal for completion." -ForegroundColor Green
+
+# Schedule this script using an Azure Automation account
+Write-Host "\nSetting up automation schedule..." -ForegroundColor Yellow
+$automationAccountName = Read-Host "Enter the Automation Account name"
+$runbookName = Read-Host "Enter the name for the runbook"
+$scheduleName = "DailyAzureSqlBackup"
+$scheduleDescription = "Daily schedule to run Azure SQL database backup."
+
+# Ensure the Automation Account exists
+if (-not (Get-AzAutomationAccount -ResourceGroupName $resourceGroupName -Name $automationAccountName -ErrorAction SilentlyContinue)) {
+    Write-Host "Automation Account '$automationAccountName' does not exist. Creating..." -ForegroundColor Green
+    New-AzAutomationAccount -ResourceGroupName $resourceGroupName -Name $automationAccountName -Location (Get-AzResourceGroup -Name $resourceGroupName).Location
+} else {
+    Write-Host "Automation Account '$automationAccountName' exists." -ForegroundColor Cyan
+}
+
+# Publish the current script as a runbook
+if (-not (Get-AzAutomationRunbook -AutomationAccountName $automationAccountName -ResourceGroupName $resourceGroupName -Name $runbookName -ErrorAction SilentlyContinue)) {
+    Write-Host "Publishing runbook '$runbookName'..." -ForegroundColor Green
+    $runbookPath = "$PSScriptRoot\$runbookName.ps1"
+    Set-Content -Path $runbookPath -Value ((Get-Content -Path $MyInvocation.MyCommand.Path -Raw))
+    Import-AzAutomationRunbook -Path $runbookPath -Name $runbookName -AutomationAccountName $automationAccountName -ResourceGroupName $resourceGroupName -Type PowerShell
+    Publish-AzAutomationRunbook -Name $runbookName -AutomationAccountName $automationAccountName -ResourceGroupName $resourceGroupName
+} else {
+    Write-Host "Runbook '$runbookName' already exists." -ForegroundColor Cyan
+}
+
+# Create and link a daily schedule to the runbook
+if (-not (Get-AzAutomationSchedule -AutomationAccountName $automationAccountName -ResourceGroupName $resourceGroupName -Name $scheduleName -ErrorAction SilentlyContinue)) {
+    Write-Host "Creating daily schedule '$scheduleName'..." -ForegroundColor Green
+    New-AzAutomationSchedule -AutomationAccountName $automationAccountName -ResourceGroupName $resourceGroupName -Name $scheduleName -Description $scheduleDescription -StartTime (Get-Date).AddMinutes(5) -DayInterval 1
+} else {
+    Write-Host "Schedule '$scheduleName' already exists." -ForegroundColor Cyan
+}
+
+Write-Host "Linking schedule to runbook..." -ForegroundColor Yellow
+if (-not (Get-AzAutomationScheduledRunbook -AutomationAccountName $automationAccountName -ResourceGroupName $resourceGroupName -RunbookName $runbookName -ScheduleName $scheduleName -ErrorAction SilentlyContinue)) {
+    Register-AzAutomationScheduledRunbook -AutomationAccountName $automationAccountName -ResourceGroupName $resourceGroupName -RunbookName $runbookName -ScheduleName $scheduleName
+    Write-Host "Schedule linked to runbook successfully." -ForegroundColor Green
+} else {
+    Write-Host "Schedule is already linked to the runbook." -ForegroundColor Cyan
+}
+
+Write-Host "\nScript execution complete." -ForegroundColor Green
